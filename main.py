@@ -1,7 +1,7 @@
 import os
 from time import sleep
 from dotenv import load_dotenv
-from bot.conciliacao_btg import baixar_posicoes
+from bot.conciliacao_btg import baixar_posicoes, baixar_informes
 from utils.dates import get_reference_date
 from modules.boxes_input import app_option
 
@@ -43,7 +43,7 @@ while attempt < max_attempts and not success:
     elif opcao == "informe":
         try:
             print("Opção escolhida: Informes")
-            # FUNÇOES AQUI
+            baixar_informes(cpf, senha, month_year)
             success = True
         except Exception as e:
             attempt += 1

@@ -11,6 +11,8 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.common.action_chains import ActionChains
 
 from modules.boxes_input import input_token_btg
 
@@ -21,6 +23,7 @@ URL_SITE = r'https://access.btgpactualdigital.com/login/externo'
 URL_EMPRESA = r"https://access.btgpactualdigital.com/login/multiprofile"
 SCROLL_DOWN = -500
 DIRETORIO_DESTINO_PDFS = r"F:\ExtratosBcosOff\Controle Data Analysis\code\extratos_onshore_btg\documents"
+DIRETORIO_DESTINO_PDFS2 = r"F:\ExtratosBcosOff\Controle Data Analysis\code\extratos_onshore_btg\docs_informes"
 
 def get_pasta_mes(mes_ano: str) -> str:
     """
@@ -52,16 +55,6 @@ def verificar_extratos_existentes(mes_ano: str) -> set:
             clientes_processados.add(cliente)
     
     return clientes_processados
-
-
-
-chrome_options = webdriver.ChromeOptions()
-
-chrome_options.add_experimental_option("prefs", {
-    "disable-popup-blocking": True,
-    "download.default_directory": DIRETORIO_DESTINO_PDFS,
-    "savefile.default_directory": DIRETORIO_DESTINO_PDFS,
-})
 
 # Caminho do arquivo de log
 
@@ -114,6 +107,15 @@ def mudar_cliente(url: str, new_client: str) -> str:
     new_url = f"{parte_inicial}{new_client}/history/{parte_final}"
     
     return new_url
+
+def close_overlays(driver):
+    # Move o mouse para uma área “neutra”
+    try:
+        body = driver.find_element(By.TAG_NAME, "body")
+        ActionChains(driver).move_to_element_with_offset(body, 10, 10).perform()
+        ActionChains(driver).move_to_element_with_offset(body, 100, 100).perform()
+    except Exception:
+        pass
 
 
 def contas_clientes(path: str) -> dict:
@@ -172,6 +174,12 @@ def data_referencia(mes_ano: str) -> tuple:
     ano_str = str(ano)
 
     return mes_str, ano_str
+    
+def data_informe(mes_ano: str):
+    mes_atual, ano_atual = map(int, mes_ano.split("/"))
+    ano = ano_atual - 1    
+    ano_str = str(ano)
+    return ano_str
 
 # Função para renomear o arquivo baixado
 
@@ -264,6 +272,53 @@ def renomear_arquivo(diretorio: str, cliente: str, mes_ano: str) -> str | None:
         print(f"Erro ao processar o arquivo: {e}")
         return None
 
+def renomear_informe(diretorio: str, cliente: str, mes_ano: str) -> str | None:
+    try:
+        # Localizar o arquivo mais recente no diretório
+        arquivos = glob.glob(os.path.join(diretorio, "*"))
+
+        if not arquivos:
+            print(f"Nenhum arquivo encontrado no diretório {diretorio}")
+            return None
+
+        arquivo_mais_recente = max(arquivos, key=os.path.getctime)
+
+        # Obter a extensão do arquivo
+        extensao = os.path.splitext(arquivo_mais_recente)[1]
+        ano = data_informe(mes_ano)
+        familia = cliente.split(" - ")[0].strip()
+
+        # Move para a pasta final
+        destino_base = r"F:\Informes de Rendimentos\Casca BTG 2025" # ALTERAR AQUI
+        pasta_destino = os.path.join(destino_base, familia)
+
+        if not os.path.exists(pasta_destino):
+            print(f"Diretório {pasta_destino} não existe. Tentando criar...")
+            try:
+                os.makedirs(pasta_destino, exist_ok=True)
+            except Exception as e:
+                print(f"Erro ao criar diretório: {e}")
+                return None
+
+        novo_nome = f"{cliente} - BTG Informe - {ano}{extensao}"
+        destino_arquivo = os.path.join(pasta_destino, novo_nome)
+
+        try:
+            shutil.move(arquivo_mais_recente, destino_arquivo)
+            return destino_arquivo
+        except Exception as e:
+            print(f"Erro ao mover arquivo para destino final: {e}")
+            # Se falhou ao mover, tenta pelo menos copiar
+            try:
+                shutil.copy2(arquivo_mais_recente, destino_arquivo)
+                os.remove(arquivo_mais_recente)  # Tenta remover o original
+                return destino_arquivo
+            except:
+                return None
+
+    except Exception as e:
+        print(f"Erro ao processar o arquivo: {e}")
+        return None
 
 def baixar_posicoes(login: str, senha: str, mes_ano: str) -> None:
     """
@@ -272,7 +327,13 @@ def baixar_posicoes(login: str, senha: str, mes_ano: str) -> None:
     :param senha: senha do cliente
     :return: True se o download for realizado com sucesso, False caso contrário.
     """
-    
+    chrome_options = webdriver.ChromeOptions()
+    chrome_options.add_experimental_option("prefs", {
+        "disable-popup-blocking": True,
+        "download.default_directory": DIRETORIO_DESTINO_PDFS,
+        "savefile.default_directory": DIRETORIO_DESTINO_PDFS,
+    })    
+
     # Carrega a lista de clientes
     clients = contas_clientes(path=r"F:\ExtratosBcosOff\Controle Data Analysis\controle_extratos_ONSHORE.xlsm")
     clients_list = list(clients.keys())
@@ -478,6 +539,245 @@ def baixar_posicoes(login: str, senha: str, mes_ano: str) -> None:
                                 sleep(4)
                                 try:
                                     file_path = renomear_arquivo(DIRETORIO_DESTINO_PDFS, cliente_nome, mes_ano)
+                                    log_download(cliente_nome, "ok", file_path)
+                                except Exception as e:
+                                    print(f"\nErro ao salvar arquivo para {cliente_nome}: {e}")
+                                    log_download(cliente_nome, "erro ao salvar", None)
+                            except Exception as e:
+                                print(f"\nErro ao clicar no botão de download para {cliente_nome}: {e}")
+                                log_download(cliente_nome, "erro no download", None)
+                        else:
+                            log_download(cliente_nome, "not ok - botão não encontrado", None)
+                except Exception as e:
+                    print(f"\nErro ao processar cliente {cliente_nome}: {e}")
+                    log_download(cliente_nome, "erro no processamento", None)
+                    continue  # Continua para o próximo cliente mesmo se houver erro
+            
+            print(f"\n\nProcessamento da {empresa.upper()} concluído! {len(lista_clientes)} clientes processados.")
+            
+            # Se ainda houver outra empresa para processar, volta para a página multiprofile
+            if empresa == 'turim' and len(clients_tori) > 0:
+                print("\nVoltando para a página de seleção de perfil...")
+                navegador.get(URL_EMPRESA)
+                sleep(2)
+        
+        print(f"\n\n{'='*60}")
+        print(f"Processamento total concluído! {total_clients} clientes processados.")
+        print(f"{'='*60}")
+    except Exception as e:
+        print(f"\nErro durante o processamento: {e}")
+    finally:
+        if navegador:
+            try:
+                navegador.quit()
+            except:
+                print("Erro ao fechar o navegador")
+                pass
+
+def baixar_informes(login: str, senha: str, mes_ano: str) -> None:
+    """
+    Método que baixa os informes de imposto de renda do BTG Pactual.
+    :param login: login do cliente
+    :param senha: senha do cliente
+    :return: True se o download for realizado com sucesso, False caso contrário.
+    """
+    chrome_options = webdriver.ChromeOptions()
+
+    chrome_options.add_experimental_option("prefs", {
+        "disable-popup-blocking": True,
+        "download.default_directory": DIRETORIO_DESTINO_PDFS2,
+        "savefile.default_directory": DIRETORIO_DESTINO_PDFS2,
+    })
+
+    # Carrega a lista de clientes
+    clients = contas_clientes(path=r"F:\ExtratosBcosOff\Controle Data Analysis\controle_extratos_ONSHORE.xlsm")
+    clients_list = list(clients.keys())
+     
+    # Filtra a lista de clientes para processar apenas os que não têm extratos
+    # e separa por empresa (primeiro turim, depois tori)
+    clients_turim = []
+    clients_tori = []
+    
+    for client_id in clients_list:
+        cliente_nome, empresa = clients[client_id]
+        if empresa == 'turim':
+            clients_turim.append(client_id)
+        elif empresa == 'tori':
+            clients_tori.append(client_id)
+        else:
+            # Se não for turim nem tori, adiciona ao final (tori)
+            clients_tori.append(client_id)
+    
+    # Concatena turim primeiro, depois tori
+    clients_para_processar = clients_turim + clients_tori
+    
+    if len(clients_para_processar) == 0:
+        print(f"Todos os extratos do mês {mes_ano} já foram baixados!")
+        return
+    
+    print(f"Encontrados {len(clients_list)} clientes existentes.")
+    print(f"Serão processados {len(clients_para_processar)} clientes pendentes.")
+    print(f"  - Turim: {len(clients_turim)} clientes")
+    print(f"  - Tori: {len(clients_tori)} clientes")
+    
+    # Cria ou atualiza o arquivo de log
+    if not os.path.exists(LOG_PATH):
+        wb = Workbook()
+        ws = wb.active
+        ws.append(["Timestamp", "Cliente", "Status", "Caminho"])
+    else:
+        wb = load_workbook(LOG_PATH)
+        ws = wb.active
+    
+    # Atualiza o log apenas com os clientes que serão processados
+    for client_id in clients_para_processar:
+        cliente_nome, empresa = clients[client_id]
+        ws.append(["", cliente_nome, "", ""])
+    
+    wb.save(LOG_PATH)
+
+    navegador = None
+    max_retries = 3
+    retry_count = 0
+    
+    while retry_count < max_retries:
+        try:
+            navegador = webdriver.Chrome(options=chrome_options)
+            navegador.set_window_position(1920, 0)  # Ajustar para a posição x e y do seu segundo monitor
+                    
+            # Navegar até a página
+            navegador.get(URL_SITE)
+            navegador.maximize_window()
+            break  # Se chegou aqui, a inicialização foi bem sucedida
+        except Exception as e:
+            retry_count += 1
+            print(f"\nTentativa {retry_count} de {max_retries} falhou ao inicializar o navegador: {e}")
+            if navegador:
+                try:
+                    navegador.quit()
+                except:
+                    pass
+            if retry_count == max_retries:
+                print("Falha ao inicializar o navegador após todas as tentativas.")
+                return
+            sleep(5)  # Espera 5 segundos antes de tentar novamente
+    
+    total_clients = len(clients_para_processar)
+    if total_clients == 0:
+        if navegador:
+            navegador.quit()
+        return
+
+    try:
+        # Autenticação
+        try:
+            WebDriverWait(navegador, 10).until(EC.presence_of_element_located((By.XPATH, "//input[@name='login']"))).send_keys(login) # usuário
+            WebDriverWait(navegador, 10).until(EC.presence_of_element_located((By.XPATH, "//input[@name='password']"))).send_keys(senha) # senha
+
+            token = input_token_btg() # token
+            
+            WebDriverWait(navegador, 10).until(EC.presence_of_element_located((By.XPATH, "//input[@name='softToken']"))).send_keys(token)
+            sleep(0.5)
+            # clicar no botão de Entrar
+            WebDriverWait(navegador, 10).until(EC.presence_of_element_located((By.XPATH, "//button[@name='entrar']"))).click()    
+            sleep(2)
+        except Exception as e:
+            print(f"\nErro na autenticação: {e}")
+            return
+
+        # Processar cada empresa separadamente
+        empresas_a_processar = []
+        if len(clients_turim) > 0:
+            empresas_a_processar.append(('turim', clients_turim))
+        if len(clients_tori) > 0:
+            empresas_a_processar.append(('tori', clients_tori))
+        
+        for empresa, lista_clientes in empresas_a_processar:
+            print(f"\n\n{'='*60}")
+            print(f"Iniciando processamento dos clientes da {empresa.upper()}")
+            print(f"Total de clientes: {len(lista_clientes)}")
+            print(f"{'='*60}\n")
+            
+            # Selecionar o perfil correto
+            if not selecionar_perfil(navegador, empresa):
+                print(f"Não foi possível selecionar o perfil da {empresa.upper()}. Pulando...")
+                continue
+            
+            # Após selecionar o perfil, navegar para a área de trabalho
+            try:
+                # clicar em Operacionalização
+                WebDriverWait(navegador, 10).until(EC.presence_of_element_located((By.XPATH,"//img[@src='/assets/img/ico-operation.svg']"))).click()
+                sleep(0.5)
+                # clicar em Atendimento ao cliente
+                WebDriverWait(navegador, 10).until(EC.presence_of_element_located((By.XPATH,"//li/a[@class='menu-second-route' and contains(text(), 'Atendimento ao cliente')]"))).click()
+                sleep(0.5)
+            except Exception as e:
+                print(f"\nErro ao navegar para Atendimento ao cliente ({empresa.upper()}): {e}")
+                continue
+
+            # Loop principal de processamento dos clientes da empresa atual
+            for i in range(len(lista_clientes)):
+                cliente_nome, empresa_cliente = clients[lista_clientes[i]]
+                print(f"\r{i+1}/{len(lista_clientes)} clientes {empresa.upper()} em processamento: {cliente_nome}", end="", flush=True)
+                try:
+                    if i == 0:
+                        # buscar pelo cpf/conta/cnpj
+                        WebDriverWait(navegador, 10).until(EC.presence_of_element_located((By.XPATH,"//input[@type='text']"))).send_keys(lista_clientes[i])
+                        sleep(0.5)
+                        WebDriverWait(navegador, 10).until(EC.presence_of_element_located((By.XPATH,"//span[@class='ng-binding']"))).click()
+                        sleep(0.5)    
+                        # Clicar em Histórico
+                        WebDriverWait(navegador, 10).until(EC.presence_of_element_located((By.XPATH,"//a[@class='nav-link text-uppercase ng-binding' and contains(text(),'Hist')]"))).click()
+                        sleep(0.5)
+                        # Clicar em Documentos
+                        WebDriverWait(navegador, 10).until(EC.presence_of_element_located((By.XPATH,"//a[@class='ng-binding' and contains(text(),'Documentos')]"))).click()
+                        sleep(0.5)
+                        # Clicar em Informe de Rendimento
+                        WebDriverWait(navegador, 10).until(EC.presence_of_element_located((By.XPATH,"//a[contains(text(),'Imposto de Renda')]"))).click()
+                        sleep(0.5)
+                        for _ in range(2):
+                            # Scroll para baixo para garantir que todos os elementos estejam visíveis            
+                            close_overlays(navegador)  
+                            main_content = navegador.find_element(By.CSS_SELECTOR, "btgmenu .main-content")
+                            navegador.execute_script("arguments[0].scrollTop = arguments[0].scrollTop + arguments[1];", main_content, 700)
+                            sleep(0.8)
+                            botao = WebDriverWait(navegador, 10).until(EC.presence_of_element_located((By.XPATH,"//button[@id='downloadGroupsConfig'][1]")))
+                            sleep(1)  # Aguarde um momento para o carregamento completo
+                            if botao:
+                                try:
+                                    sleep(0.5)
+                                    botao.click()
+                                    sleep(3)
+                                    try:
+                                        file_path = renomear_informe(DIRETORIO_DESTINO_PDFS2, cliente_nome, mes_ano)
+                                        log_download(cliente_nome, "ok", file_path)
+                                    except Exception as e:
+                                        print(f"\nErro ao salvar arquivo para {cliente_nome}: {e}")
+                                        log_download(cliente_nome, "erro ao salvar", None)
+                                except Exception as e:
+                                    print(f"\nErro ao clicar no botão de download para {cliente_nome}: {e}")
+                                    log_download(cliente_nome, "erro no download", None)
+                            else:
+                                log_download(cliente_nome, "not ok - botão não encontrado", None)
+
+                    else:
+                        # Extrair a URL atual para iterar por todos os clientes ajustando a url
+                        current_url = navegador.current_url
+                        # Mudar o cliente na URL
+                        new_client = lista_clientes[i]
+                        new_url = mudar_cliente(current_url, new_client)
+                        navegador.get(new_url)
+                        WebDriverWait(navegador, 10).until(EC.presence_of_element_located((By.CSS_SELECTOR, "btgmenu .main-content")))
+                        main_content = navegador.find_element(By.CSS_SELECTOR, "btgmenu .main-content")
+                        navegador.execute_script("arguments[0].scrollTop = arguments[0].scrollTop + arguments[1];", main_content, 700)
+                        sleep(0.8)
+                        botao = WebDriverWait(navegador, 10).until(EC.presence_of_element_located((By.XPATH,"//button[@id='downloadGroupsConfig'][1]")))
+                        if botao:
+                            try:
+                                botao.click()
+                                sleep(3)
+                                try:
+                                    file_path = renomear_informe(DIRETORIO_DESTINO_PDFS2, cliente_nome, mes_ano)
                                     log_download(cliente_nome, "ok", file_path)
                                 except Exception as e:
                                     print(f"\nErro ao salvar arquivo para {cliente_nome}: {e}")
